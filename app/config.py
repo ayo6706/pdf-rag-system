@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     default_embedding_model: str = "gemini/gemini-embedding-001"
     chroma_host: str = "chroma"
     chroma_port: int = 8000
+    confidence_threshold: float = 0.3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
