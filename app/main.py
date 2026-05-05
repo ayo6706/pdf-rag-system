@@ -8,6 +8,8 @@ import logging
 from app.database import engine, async_session_maker
 from app.models import Base, Document, DocumentStatus
 from app.api.routers import health, documents
+from app.services.vector_store import VectorStore
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,13 @@ async def lifespan(app: FastAPI):
         
     # Crash recovery
     await recover_stuck_documents()
-            
+
+    # Initialize vector store
+    app.state.vector_store = VectorStore(
+        host=settings.chroma_host,
+        port=settings.chroma_port
+    )
+
     yield
     
     await engine.dispose()
