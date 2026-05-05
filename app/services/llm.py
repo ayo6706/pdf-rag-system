@@ -14,7 +14,9 @@ from tenacity import (
     retry_if_exception,
 )
 
-from app.exceptions import EmbeddingError
+from typing import AsyncGenerator
+
+from app.exceptions import EmbeddingError, LLMError
 from app.services.chunker import TextChunk
 
 logger = logging.getLogger(__name__)
@@ -95,3 +97,60 @@ async def embed_chunks(
 
     logger.info(f"Generated embeddings for {len(all_results)} chunks")
     return all_results
+
+
+async def embed_text(text: str, model: str = "gemini/gemini-embedding-001") -> list[float]:
+    """Embed a single text string (for questions)."""
+    try:
+        results = await _embed_batch([text], model)
+        return results[0]
+    except Exception as exc:
+        raise EmbeddingError(f"Embedding API failed after retries: {exc}") from exc
+
+
+async def completion(
+    prompt: str,
+    system_instruction: str,
+    model: str = "gemini/gemini-2.5-flash",
+) -> str:
+    """Non-streaming LLM completion via LiteLLM."""
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+        )
+        content = response.choices[0].message.content or ""
+        return content.strip()
+    except Exception as exc:
+        raise LLMError(f"LLM API failed: {exc}") from exc
+
+
+async def stream_completion(
+    prompt: str,
+    system_instruction: str,
+    model: str = "gemini/gemini-2.5-flash",
+) -> AsyncGenerator[str, None]:
+    """Stream LLM completion via LiteLLM."""
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt},
+            ],
+            stream=True,
+        )
+        async for chunk in response:
+            if chunk.choices and len(chunk.choices) > 0:
+                delta_obj = chunk.choices[0].delta
+                if delta_obj is None:
+                    continue
+                content = getattr(delta_obj, "content", None)
+                if content:
+                    yield content
+    except Exception as exc:
+        raise LLMError(f"LLM streaming failed: {exc}") from exc
