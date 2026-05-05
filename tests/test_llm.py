@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.services.llm import embed_chunks, ChunkWithEmbedding, _embed_batch
+from app.services.llm import embed_chunks, ChunkWithEmbedding, _embed_batch, embed_text, completion, stream_completion
 from app.services.chunker import TextChunk
-from app.exceptions import EmbeddingError
+from app.exceptions import EmbeddingError, LLMError
 
 
 def _make_chunks(n: int) -> list[TextChunk]:
@@ -122,3 +122,49 @@ class TestEmbedChunks:
 
         assert len(results) == 2
         assert mock_embed.call_count == 2
+
+class TestEmbedText:
+    @pytest.mark.asyncio
+    async def test_embed_text(self):
+        with patch("app.services.llm.litellm.aembedding", new_callable=AsyncMock) as mock_embed:
+            mock_embed.return_value = _mock_embedding_response(["hello"])
+            result = await embed_text("hello")
+            assert result == [0.1] * 768
+
+class TestCompletion:
+    @pytest.mark.asyncio
+    async def test_completion(self):
+        with patch("app.services.llm.litellm.acompletion", new_callable=AsyncMock) as mock_comp:
+            response = MagicMock()
+            response.choices = [MagicMock(message=MagicMock(content="answer"))]
+            mock_comp.return_value = response
+
+            result = await completion("prompt", "system")
+            assert result == "answer"
+            mock_comp.assert_called_once()
+            
+    @pytest.mark.asyncio
+    async def test_completion_error(self):
+        with patch("app.services.llm.litellm.acompletion", new_callable=AsyncMock) as mock_comp:
+            mock_comp.side_effect = Exception("API down")
+            with pytest.raises(LLMError, match="API down"):
+                await completion("prompt", "system")
+
+    @pytest.mark.asyncio
+    async def test_stream_completion(self):
+        with patch("app.services.llm.litellm.acompletion", new_callable=AsyncMock) as mock_comp:
+            # Create an async generator mock that yields fake chunks
+            async def mock_stream():
+                for word in ["hello", " world"]:
+                    chunk = MagicMock()
+                    chunk.choices = [MagicMock(delta=MagicMock(content=word))]
+                    yield chunk
+                    
+            mock_comp.return_value = mock_stream()
+
+            results = []
+            async for chunk in stream_completion("prompt", "system"):
+                results.append(chunk)
+                
+            assert results == ["hello", " world"]
+            mock_comp.assert_called_once()

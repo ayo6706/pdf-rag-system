@@ -40,6 +40,9 @@ app.services.document_service.async_session_maker = test_async_session_maker
 import app.services.ingestion
 app.services.ingestion.async_session_maker = test_async_session_maker
 
+import app.services.retrieval
+app.services.retrieval.async_session_maker = test_async_session_maker
+
 # Set up mocked VectorStore on app.state for API tests
 from unittest.mock import MagicMock
 fastapi_app.state.vector_store = MagicMock()

@@ -79,3 +79,49 @@ class TestVectorStore:
         # Should not raise
         vs.delete_by_doc_id("nonexistent")
         mock_collection.delete.assert_called_once_with(where={"doc_id": "nonexistent"})
+
+    def test_search(self, vs, mock_chroma_client):
+        _, _, mock_collection = mock_chroma_client
+        mock_collection.query.return_value = {
+            "ids": [["id1", "id2"]],
+            "distances": [[0.2, 0.8]],
+            "documents": [["text1", "text2"]],
+            "metadatas": [[{"doc_id": "doc1", "page_number": 1}, {"doc_id": "doc2", "page_number": 2}]]
+        }
+
+        results = vs.search([0.1, 0.2], top_k=2)
+
+        mock_collection.query.assert_called_once_with(
+            query_embeddings=[[0.1, 0.2]],
+            n_results=2
+        )
+        assert len(results) == 2
+        assert results[0].chunk_text == "text1"
+        assert results[0].doc_id == "doc1"
+        assert results[0].page_number == 1
+        assert results[0].distance == 0.2
+        assert results[0].similarity == 0.9  # 1 - (0.2 / 2)
+
+    def test_search_with_doc_ids(self, vs, mock_chroma_client):
+        _, _, mock_collection = mock_chroma_client
+        mock_collection.query.return_value = {"ids": []}
+
+        vs.search([0.1, 0.2], top_k=5, doc_ids=["doc1", "doc2"])
+
+        mock_collection.query.assert_called_once_with(
+            query_embeddings=[[0.1, 0.2]],
+            n_results=5,
+            where={"doc_id": {"$in": ["doc1", "doc2"]}}
+        )
+
+    def test_search_with_single_doc_id(self, vs, mock_chroma_client):
+        _, _, mock_collection = mock_chroma_client
+        mock_collection.query.return_value = {"ids": []}
+
+        vs.search([0.1], top_k=5, doc_ids=["doc1"])
+
+        mock_collection.query.assert_called_once_with(
+            query_embeddings=[[0.1]],
+            n_results=5,
+            where={"doc_id": "doc1"}
+        )
