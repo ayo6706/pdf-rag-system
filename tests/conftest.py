@@ -1,4 +1,3 @@
-import os
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -34,9 +33,16 @@ async def override_get_db():
 
 fastapi_app.dependency_overrides[get_db] = override_get_db
 
-# Patch the background task session maker
+# Patch the background task session makers
 import app.services.document_service
 app.services.document_service.async_session_maker = test_async_session_maker
+
+import app.services.ingestion
+app.services.ingestion.async_session_maker = test_async_session_maker
+
+# Set up mocked VectorStore on app.state for API tests
+from unittest.mock import MagicMock
+fastapi_app.state.vector_store = MagicMock()
 
 @pytest.fixture(scope="session")
 def anyio_backend():
