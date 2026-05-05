@@ -7,7 +7,7 @@ import logging
 
 from app.database import engine, async_session_maker
 from app.models import Base, Document, DocumentStatus
-from app.api.routers import health, documents
+from app.api.routers import health, documents, query
 from app.services.vector_store import VectorStore
 from app.config import settings
 
@@ -66,3 +66,4 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.include_router(health.router)
 app.include_router(documents.router)
+app.include_router(query.router)

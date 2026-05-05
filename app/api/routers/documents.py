@@ -40,6 +40,13 @@ async def upload_document(
             status_code=413,
             content={"detail": f"File exceeds maximum size of {settings.max_upload_size_mb}MB", "error_code": "FILE_TOO_LARGE"}
         )
+    
+    # Validate PDF magic bytes (%PDF-)
+    if not content[:5].startswith(b"%PDF-"):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "File content is not a valid PDF", "error_code": "INVALID_FILE_TYPE"}
+        )
     await file.seek(0)
     
     # Sanitize filename: strip path components, generate unique storage name
