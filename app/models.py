@@ -15,7 +15,7 @@ class DocumentStatus(str, Enum):
     FAILED = "failed"
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class Document(Base):
     __tablename__ = "documents"
