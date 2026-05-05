@@ -1,6 +1,8 @@
 import os
 import uuid
-from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException, status
+import asyncio
+import logging
+from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,13 +10,17 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models import Document, DocumentStatus
 from app.schemas import DocumentResponse, DocumentListResponse
-from app.services.document_service import save_upload_file, process_document_stub
+from app.services.document_service import save_upload_file
+from app.services.ingestion import ingest_document
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
@@ -55,8 +61,15 @@ async def upload_document(
     await db.commit()
     await db.refresh(new_doc)
     
-    # Kick off background task
-    background_tasks.add_task(process_document_stub, new_doc.id)
+    # Kick off background ingestion pipeline
+    vector_store = getattr(request.app.state, "vector_store", None)
+    if vector_store is None:
+        logger.error("Vector store not initialized — ingestion will not run")
+        raise HTTPException(
+            status_code=503,
+            detail="Vector store is unavailable. Please try again later.",
+        )
+    background_tasks.add_task(ingest_document, new_doc.id, vector_store, settings)
     
     return new_doc
 
@@ -82,7 +95,7 @@ async def get_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db
     return document
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(document_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_document(document_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db)):
     stmt = select(Document).where(Document.id == document_id)
     result = await db.execute(stmt)
     document = result.scalar_one_or_none()
@@ -93,7 +106,18 @@ async def delete_document(document_id: uuid.UUID, db: AsyncSession = Depends(get
             content={"detail": "Document not found", "error_code": "DOCUMENT_NOT_FOUND"}
         )
     
-    # Delete from DB first, then disk — avoids orphaned DB record if commit fails
+    # Delete from ChromaDB first (sync call — run off the event loop)
+    try:
+        vector_store = getattr(request.app.state, "vector_store", None)
+        if vector_store is not None:
+            await asyncio.to_thread(vector_store.delete_by_doc_id, str(document_id))
+    except Exception:
+        logger.warning(
+            f"Failed to delete chunks from ChromaDB for doc {document_id}",
+            exc_info=True,
+        )
+
+    # Delete from DB, then disk — avoids orphaned DB record if commit fails
     storage_name = document.storage_filename
     await db.delete(document)
     await db.commit()
@@ -104,7 +128,6 @@ async def delete_document(document_id: uuid.UUID, db: AsyncSession = Depends(get
         try:
             os.remove(file_path)
         except Exception:
-            # DB record already deleted; log and continue
-            pass
+            logger.warning(f"Failed to delete file from disk: {file_path}", exc_info=True)
     
     return None
