@@ -14,3 +14,8 @@ class PDFParseError(Exception):
 class EmbeddingError(Exception):
     """Raised when the embedding API fails after exhausting all retries."""
     pass
+
+
+class LLMError(Exception):
+    """Raised when the LLM generation API fails."""
+    pass

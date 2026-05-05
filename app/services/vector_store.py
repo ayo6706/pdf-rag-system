@@ -8,7 +8,17 @@ import uuid
 import logging
 import chromadb
 
+from dataclasses import dataclass
+
 from app.services.llm import ChunkWithEmbedding
+
+@dataclass
+class SearchResult:
+    chunk_text: str
+    doc_id: str
+    page_number: int
+    distance: float
+    similarity: float
 
 logger = logging.getLogger(__name__)
 
@@ -92,3 +102,53 @@ class VectorStore:
             else:
                 logger.exception(f"Unexpected error deleting chunks for doc_id={doc_id}")
                 raise
+
+    def search(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        doc_ids: list[str] | None = None,
+    ) -> list[SearchResult]:
+        """Search for similar chunks. Optionally filter by doc_ids.
+
+        Args:
+            query_embedding: The embedding of the search query.
+            top_k: Number of results to return.
+            doc_ids: Optional list of document UUID strings to filter by.
+
+        Returns:
+            A list of SearchResult objects, sorted by similarity.
+        """
+        kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": top_k,
+        }
+        
+        if doc_ids:
+            if len(doc_ids) == 1:
+                kwargs["where"] = {"doc_id": doc_ids[0]}
+            else:
+                kwargs["where"] = {"doc_id": {"$in": doc_ids}}
+                
+        results = self.collection.query(**kwargs)
+        
+        search_results = []
+        if not results or not results.get("ids") or not results["ids"][0]:
+            return search_results
+            
+        for i in range(len(results["ids"][0])):
+            distance = results["distances"][0][i]
+            similarity = 1 - (distance / 2.0)
+            meta = results["metadatas"][0][i]
+            
+            search_results.append(
+                SearchResult(
+                    chunk_text=results["documents"][0][i],
+                    doc_id=meta.get("doc_id", ""),
+                    page_number=meta.get("page_number", 0),
+                    distance=distance,
+                    similarity=max(0.0, min(1.0, similarity)), # clamp between 0 and 1
+                )
+            )
+            
+        return search_results
