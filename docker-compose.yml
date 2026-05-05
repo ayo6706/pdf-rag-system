@@ -6,6 +6,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./uploads:/app/uploads
+      - ./pyproject.toml:/app/pyproject.toml
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/pdf_kb
       - CHROMA_HOST=chroma

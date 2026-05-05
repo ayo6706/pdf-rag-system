@@ -22,6 +22,7 @@ COPY --from=builder /install /usr/local
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
 
 
+COPY pyproject.toml .
 COPY ./app ./app
 
 RUN mkdir -p ./uploads && chown -R appuser:appuser /app
@@ -30,4 +31,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["fastapi", "run", "--port", "8000"]
