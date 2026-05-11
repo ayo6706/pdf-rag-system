@@ -2,48 +2,30 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import select
 import logging
 
-from app.database import engine, async_session_maker
-from app.models import Base, Document, DocumentStatus
-from app.api.routers import health, documents, query
-from app.services.vector_store import VectorStore
-from app.config import settings
+from app.core.database import engine
+from app.core.config import infra_settings
+from sqlmodel import SQLModel
+from app.api.v1.router import api_router
+from app.core.vector_store import create_vector_store
+from app.services.document_service import recover_stuck_documents
 
 logger = logging.getLogger(__name__)
-
-async def recover_stuck_documents():
-    """Reset documents stuck in PROCESSING back to PENDING (crash recovery)."""
-    try:
-        async with async_session_maker() as session:
-            stmt = select(Document).where(Document.status == DocumentStatus.PROCESSING)
-            result = await session.execute(stmt)
-            
-            count = 0
-            for doc in result.scalars():
-                doc.status = DocumentStatus.PENDING
-                count += 1
-            
-            if count:
-                await session.commit()
-                logger.info(f"Crash recovery: reset {count} stuck documents to PENDING.")
-    except Exception:
-        logger.exception("Crash recovery failed — startup will continue.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(SQLModel.metadata.create_all)
         
     # Crash recovery
     await recover_stuck_documents()
 
     # Initialize vector store
-    app.state.vector_store = VectorStore(
-        host=settings.chroma_host,
-        port=settings.chroma_port
+    app.state.vector_store = create_vector_store(
+        host=infra_settings.chroma_host,
+        port=infra_settings.chroma_port,
     )
 
     yield
@@ -58,12 +40,10 @@ app = FastAPI(
 )
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
         content={"detail": str(exc), "error_code": "VALIDATION_ERROR"}
     )
 
-app.include_router(health.router)
-app.include_router(documents.router)
-app.include_router(query.router)
+app.include_router(api_router)
