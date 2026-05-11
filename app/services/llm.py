@@ -1,6 +1,9 @@
-"""Embedding generation via LiteLLM.
+"""LLM and embedding integration via LiteLLM.
 
-Wraps LiteLLM's async embedding API with batching and retry logic.
+Wraps LiteLLM's async APIs with batching, retry logic, and provider-agnostic
+model routing. Supports any provider that LiteLLM supports (Google Gemini,
+OpenAI, Anthropic, etc.) — just set the corresponding API key env var and
+configure the model identifier in settings.
 """
 
 import logging
@@ -16,17 +19,11 @@ from tenacity import (
 
 from typing import AsyncGenerator
 
-from app.exceptions import EmbeddingError, LLMError
+from app.core.exceptions import EmbeddingError, LLMError
 from app.services.chunker import TextChunk
+from app.schemas.embedding import ChunkWithEmbedding
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ChunkWithEmbedding:
-    """A text chunk paired with its embedding vector."""
-    chunk: TextChunk
-    embedding: list[float]
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -57,7 +54,7 @@ async def _embed_batch(texts: list[str], model: str) -> list[list[float]]:
 
 async def embed_chunks(
     chunks: list[TextChunk],
-    model: str = "gemini/gemini-embedding-001",
+    model: str,
     batch_size: int = 100,
 ) -> list[ChunkWithEmbedding]:
     """Generate embeddings for text chunks via LiteLLM.
@@ -67,7 +64,8 @@ async def embed_chunks(
 
     Args:
         chunks: Text chunks to embed.
-        model: LiteLLM model identifier for the embedding model.
+        model: LiteLLM model identifier (e.g. "gemini/gemini-embedding-001",
+               "text-embedding-3-small").
         batch_size: Maximum number of chunks per API call.
 
     Returns:
@@ -99,7 +97,7 @@ async def embed_chunks(
     return all_results
 
 
-async def embed_text(text: str, model: str = "gemini/gemini-embedding-001") -> list[float]:
+async def embed_text(text: str, model: str) -> list[float]:
     """Embed a single text string (for questions)."""
     try:
         results = await _embed_batch([text], model)
@@ -111,9 +109,16 @@ async def embed_text(text: str, model: str = "gemini/gemini-embedding-001") -> l
 async def completion(
     prompt: str,
     system_instruction: str,
-    model: str = "gemini/gemini-2.5-flash",
+    model: str,
 ) -> str:
-    """Non-streaming LLM completion via LiteLLM."""
+    """Non-streaming LLM completion via LiteLLM.
+
+    Args:
+        prompt: User message / prompt text.
+        system_instruction: System prompt.
+        model: LiteLLM model identifier (e.g. "gemini/gemini-2.5-flash",
+               "gpt-4o", "claude-sonnet-4-20250514").
+    """
     try:
         response = await litellm.acompletion(
             model=model,
@@ -132,9 +137,16 @@ async def completion(
 async def stream_completion(
     prompt: str,
     system_instruction: str,
-    model: str = "gemini/gemini-2.5-flash",
+    model: str,
 ) -> AsyncGenerator[str, None]:
-    """Stream LLM completion via LiteLLM."""
+    """Stream LLM completion via LiteLLM.
+
+    Args:
+        prompt: User message / prompt text.
+        system_instruction: System prompt.
+        model: LiteLLM model identifier (e.g. "gemini/gemini-2.5-flash",
+               "gpt-4o", "claude-sonnet-4-20250514").
+    """
     try:
         response = await litellm.acompletion(
             model=model,
