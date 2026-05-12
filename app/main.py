@@ -9,7 +9,7 @@ from app.core.config import infra_settings
 from sqlmodel import SQLModel
 from app.api.v1.router import api_router
 from app.core.vector_store import create_vector_store
-from app.services.document_service import recover_stuck_documents
+from app.services.document import document_service
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(SQLModel.metadata.create_all)
         
     # Crash recovery
-    await recover_stuck_documents()
+    await document_service.recover_stuck_documents()
 
     # Initialize vector store
     app.state.vector_store = create_vector_store(

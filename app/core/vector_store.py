@@ -1,7 +1,7 @@
 """Vector store infrastructure
 """
 
-from app.repositories.vector_store import VectorStore
+from app.integrations.vectorstores.chroma import VectorStore
 
 
 def create_vector_store(host: str, port: int, collection_name: str = "documents") -> VectorStore:

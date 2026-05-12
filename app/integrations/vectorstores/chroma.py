@@ -45,8 +45,8 @@ class VectorStore:
             metadata={"hnsw:space": "cosine"},
         )
         logger.info(
-            f"VectorStore initialized: collection='{collection_name}', "
-            f"server='http://{host}:{port}'"
+            "VectorStore initialized: collection='%s', server='http://%s:%s'",
+            collection_name, host, port
         )
 
     def upsert_chunks(self, doc_id: str, chunks: list[ChunkWithEmbedding]) -> None:
@@ -84,7 +84,7 @@ class VectorStore:
             documents=documents,
             metadatas=metadatas,
         )
-        logger.info(f"Upserted {len(chunks)} chunks for doc_id={doc_id}")
+        logger.info("Upserted %d chunks for doc_id=%s", len(chunks), doc_id)
 
     def delete_by_doc_id(self, doc_id: str) -> None:
         """Delete all chunks belonging to a document.
@@ -94,13 +94,13 @@ class VectorStore:
         """
         try:
             self.collection.delete(where={"doc_id": doc_id})
-            logger.info(f"Deleted chunks for doc_id={doc_id}")
+            logger.info("Deleted chunks for doc_id=%s", doc_id)
         except Exception as exc:
             exc_msg = str(exc).lower()
             if "no matching" in exc_msg or "not found" in exc_msg or "empty" in exc_msg:
-                logger.debug(f"No existing chunks to delete for doc_id={doc_id}")
+                logger.debug("No existing chunks to delete for doc_id=%s", doc_id)
             else:
-                logger.exception(f"Unexpected error deleting chunks for doc_id={doc_id}")
+                logger.exception("Unexpected error deleting chunks for doc_id=%s", doc_id)
                 raise
 
     def search(
