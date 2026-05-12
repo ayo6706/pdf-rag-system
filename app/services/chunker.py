@@ -5,6 +5,8 @@ to produce overlapping chunks that preserve coherence. Chunks never span
 page boundaries and carry their source page number through the pipeline.
 """
 
+from __future__ import annotations
+
 import logging
 
 from app.lib.document.base import PageContent
@@ -27,6 +29,15 @@ def _split_text_recursive(
 
     Tries the first separator; if any resulting piece is still too large,
     falls back to the next separator for that piece, and so on.
+
+    Args:
+        text: The text to split.
+        chunk_size: Maximum characters per chunk.
+        chunk_overlap: Number of characters to overlap between chunks.
+        separators: List of separators to try in order.
+
+    Returns:
+        A list of text strings representing the chunks.
     """
     if not text or not text.strip():
         return []
@@ -49,7 +60,8 @@ def _split_text_recursive(
             end = min(start + chunk_size, len(text))
             chunks.append(text[start:end])
             # Move forward by (chunk_size - overlap) to create overlap
-            start += chunk_size - chunk_overlap if chunk_overlap < chunk_size else chunk_size
+            step = chunk_size - chunk_overlap
+            start += step if chunk_overlap < chunk_size else chunk_size
         return chunks
 
     # Merge splits back into chunks that fit within chunk_size
@@ -57,7 +69,7 @@ def _split_text_recursive(
     current_chunk: list[str] = []
     current_length = 0
 
-    for i, split in enumerate(splits):
+    for _, split in enumerate(splits):
         piece_length = len(split) + (len(separator) if current_chunk else 0)
 
         if current_length + piece_length > chunk_size and current_chunk:
@@ -71,11 +83,11 @@ def _split_text_recursive(
                 overlap_parts: list[str] = []
                 overlap_len = 0
                 for part in reversed(current_chunk):
-                    candidate_len = len(part) + (len(separator) if overlap_parts else 0)
-                    if overlap_len + candidate_len > chunk_overlap:
+                    part_len = len(part) + (len(separator) if overlap_parts else 0)
+                    if overlap_len + part_len > chunk_overlap:
                         break
                     overlap_parts.insert(0, part)
-                    overlap_len += candidate_len
+                    overlap_len += part_len
                 if overlap_parts:
                     current_chunk = overlap_parts
                     current_length = overlap_len
@@ -99,7 +111,9 @@ def _split_text_recursive(
     for chunk in chunks:
         if len(chunk) > chunk_size:
             if remaining_separators:
-                sub_chunks = _split_text_recursive(chunk, chunk_size, chunk_overlap, remaining_separators)
+                sub_chunks = _split_text_recursive(
+                    chunk, chunk_size, chunk_overlap, remaining_separators
+                )
                 result.extend(sub_chunks)
             else:
                 # No separators left — hard-split by character
@@ -107,7 +121,8 @@ def _split_text_recursive(
                 while start < len(chunk):
                     end = min(start + chunk_size, len(chunk))
                     result.append(chunk[start:end])
-                    start += chunk_size - chunk_overlap if chunk_overlap < chunk_size else chunk_size
+                    step = chunk_size - chunk_overlap
+                    start += step if chunk_overlap < chunk_size else chunk_size
         else:
             result.append(chunk)
 
@@ -120,7 +135,7 @@ def chunk_pages(
     chunk_overlap: int = 190,
     separators: list[str] | None = None,
 ) -> list[TextChunk]:
-    """Split page text into overlapping chunks using recursive character splitting.
+    """Split page text into overlapping chunks using recursive splitting.
 
     Args:
         pages: List of PageContent objects from the PDF parser.
@@ -133,6 +148,9 @@ def chunk_pages(
     Returns:
         A list of TextChunk objects with sequential ``chunk_index`` values
         across the entire document. Empty pages produce no chunks.
+
+    Raises:
+        ValueError: If chunk_size is <= 0 or overlap is invalid.
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
@@ -153,16 +171,20 @@ def chunk_pages(
             # Skip empty pages — they produce no chunks
             continue
 
-        raw_chunks = _split_text_recursive(text, chunk_size, chunk_overlap, separators)
+        raw_chunks = _split_text_recursive(
+            text, chunk_size, chunk_overlap, separators
+        )
 
         for raw in raw_chunks:
             stripped = raw.strip()
             if stripped:
-                all_chunks.append(TextChunk(
-                    text=stripped,
-                    page_number=page.page_number,
-                    chunk_index=chunk_index,
-                ))
+                all_chunks.append(
+                    TextChunk(
+                        text=stripped,
+                        page_number=page.page_number,
+                        chunk_index=chunk_index,
+                    )
+                )
                 chunk_index += 1
 
     logger.info("Created %d chunks from %d pages", len(all_chunks), len(pages))

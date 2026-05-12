@@ -1,35 +1,58 @@
-"""ChromaDB vector store wrapper for chunk storage and retrieval.
+"""Integration with ChromaDB for vector storage and retrieval.
 
-Provides upsert and deletion operations for document chunks, connecting
-to a standalone ChromaDB server via HTTP.
+This module provides the VectorStore class which wraps the ChromaDB HTTP client
+to handle chunk embedding storage, deletion, and similarity searches.
 """
 
-import uuid
-import logging
-import chromadb
+from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import uuid
 
-from app.schemas.embedding import ChunkWithEmbedding
+import chromadb
+
+from app.schemas import embedding
+
 
 @dataclass
 class SearchResult:
+    """Represents a single search result from the vector store.
+
+    Attributes:
+        chunk_text: The text content of the document chunk.
+        doc_id: The UUID of the parent document.
+        page_number: The page number where the chunk is located.
+        distance: The raw vector distance.
+        similarity: The calculated cosine similarity score (0-1).
+    """
     chunk_text: str
     doc_id: str
     page_number: int
     distance: float
     similarity: float
 
+
 logger = logging.getLogger(__name__)
 
 # Stable namespace for deterministic chunk IDs
-_CHUNK_NS = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+_CHUNK_NS = uuid.NAMESPACE_DNS
 
 
 class VectorStore:
-    """Wrapper around a ChromaDB HttpClient."""
+    """Wrapper around a ChromaDB HttpClient.
 
-    def __init__(self, host: str = "localhost", port: int = 8000, collection_name: str = "documents"):
+    Attributes:
+        client: The ChromaDB HTTP client instance.
+        collection: The ChromaDB collection being used for storage.
+    """
+
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 8000,
+        collection_name: str = "documents"
+    ) -> None:
         """Initialize the vector store.
 
         Args:
@@ -37,19 +60,23 @@ class VectorStore:
             port: Port of the ChromaDB server.
             collection_name: Name of the ChromaDB collection.
         """
-        # We use HttpClient to connect to a standalone server (e.g. via Docker)
         self.client = chromadb.HttpClient(host=host, port=port)
-        
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
         logger.info(
             "VectorStore initialized: collection='%s', server='http://%s:%s'",
-            collection_name, host, port
+            collection_name,
+            host,
+            port,
         )
 
-    def upsert_chunks(self, doc_id: str, chunks: list[ChunkWithEmbedding]) -> None:
+    def upsert_chunks(
+        self,
+        doc_id: str,
+        chunks: list[embedding.ChunkWithEmbedding]
+    ) -> None:
         """Upsert chunk embeddings with metadata into ChromaDB.
 
         Each chunk gets a deterministic UUID derived from its doc_id and
@@ -104,7 +131,11 @@ class VectorStore:
                 raise
 
     def health_check(self) -> bool:
-        """Return whether the Chroma server is reachable."""
+        """Return whether the Chroma server is reachable.
+
+        Returns:
+            True if reachable, False otherwise.
+        """
         try:
             heartbeat = getattr(self.client, "heartbeat", None)
             if heartbeat is not None:
@@ -112,7 +143,7 @@ class VectorStore:
                 return True
             self.collection.count()
             return True
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             logger.exception("Vector store health check failed")
             return False
 
@@ -136,32 +167,32 @@ class VectorStore:
             "query_embeddings": [query_embedding],
             "n_results": top_k,
         }
-        
+
         if doc_ids:
             if len(doc_ids) == 1:
                 kwargs["where"] = {"doc_id": doc_ids[0]}
             else:
                 kwargs["where"] = {"doc_id": {"$in": doc_ids}}
-                
+
         results = self.collection.query(**kwargs)
-        
+
         search_results = []
         if not results or not results.get("ids") or not results["ids"][0]:
             return search_results
-            
+
         for i in range(len(results["ids"][0])):
             distance = results["distances"][0][i]
             similarity = 1 - (distance / 2.0)
             meta = results["metadatas"][0][i]
-            
+
             search_results.append(
                 SearchResult(
                     chunk_text=results["documents"][0][i],
                     doc_id=meta.get("doc_id", ""),
                     page_number=meta.get("page_number", 0),
                     distance=distance,
-                    similarity=max(0.0, min(1.0, similarity)), # clamp between 0 and 1
+                    similarity=max(0.0, min(1.0, similarity)),  # clamp between 0 and 1
                 )
             )
-            
+
         return search_results

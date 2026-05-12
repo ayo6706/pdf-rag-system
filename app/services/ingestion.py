@@ -3,27 +3,45 @@
 Coordinates: parse → chunk → embed → store → update DB.
 """
 
-import os
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 import uuid
+from typing import Any
 
 from app.core.config import InfraSettings, LLMSettings
-from app.core.exceptions import PasswordProtectedError, PDFParseError, EmbeddingError
-from app.schemas.embedding import ChunkWithEmbedding
-from app.lib.document.base import BaseDocumentParser
-from app.integrations.llm.base import BaseLLMProvider
-from app.services.chunker import chunk_pages
-from app.integrations.vectorstores.chroma import VectorStore
-from app.repositories.document import document_repository
 from app.core.database import get_background_session
+from app.core.exceptions import (
+    EmbeddingError,
+    PasswordProtectedError,
+    PDFParseError,
+)
+from app.integrations.llm.base import BaseLLMProvider
+from app.integrations.vectorstores.chroma import VectorStore
+from app.lib.document.base import BaseDocumentParser
+from app.repositories.document import document_repository
+from app.schemas.embedding import ChunkWithEmbedding
+from app.services.chunker import chunk_pages
 
 logger = logging.getLogger(__name__)
 
 MAX_ERROR_MESSAGE_LENGTH = 1000
 
-def _truncate_error(exc: Exception, max_len: int = MAX_ERROR_MESSAGE_LENGTH) -> str:
-    """Return a truncated string representation of an exception."""
+
+def _truncate_error(
+    exc: Exception, max_len: int = MAX_ERROR_MESSAGE_LENGTH
+) -> str:
+    """Return a truncated string representation of an exception.
+
+    Args:
+        exc: The exception to truncate.
+        max_len: The maximum length of the message.
+
+    Returns:
+        The truncated exception message.
+    """
     msg = str(exc)
     if len(msg) > max_len:
         return msg[:max_len - 3] + "..."
@@ -31,20 +49,28 @@ def _truncate_error(exc: Exception, max_len: int = MAX_ERROR_MESSAGE_LENGTH) -> 
 
 
 async def _mark_failed_after_error(
-    db,
+    db: Any,
     doc_id: uuid.UUID,
     error_message: str,
     vector_store: VectorStore | None = None,
     cleanup_vectors: bool = False,
 ) -> None:
-    """Rollback current work, optionally compensate vector writes, and mark failed."""
+    """Rollback current work and mark the document as failed.
+
+    Args:
+        db: The database session.
+        doc_id: The ID of the document.
+        error_message: The error description.
+        vector_store: Optional vector store for cleanup.
+        cleanup_vectors: Whether to delete vectors from the store.
+    """
     try:
         await db.rollback()
         if cleanup_vectors and vector_store is not None:
             await asyncio.to_thread(vector_store.delete_by_doc_id, str(doc_id))
         await document_repository.mark_failed(db, doc_id, error_message)
         await db.commit()
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         logger.exception("Failed to mark document %s as FAILED", doc_id)
 
 
@@ -58,9 +84,6 @@ async def ingest_document(
 ) -> None:
     """Full ingestion pipeline: parse → chunk → embed → store → update DB.
 
-    This coroutine is designed to run as a background task. It manages its
-    own database session to avoid conflicts with the request session.
-
     Args:
         doc_id: UUID of the document to ingest.
         vector_store: Initialized VectorStore instance.
@@ -68,6 +91,9 @@ async def ingest_document(
         llm_settings: LLM settings.
         document_parser: The document parser provider.
         llm_provider: The LLM provider.
+
+    Raises:
+        Exception: Rethrows unexpected errors after cleanup.
     """
     async with get_background_session() as db:
         vector_upserted = False
@@ -76,13 +102,17 @@ async def ingest_document(
             document = await document_repository.mark_processing(db, doc_id)
 
             if not document:
-                logger.error("Document %s not found — skipping ingestion", doc_id)
+                logger.error(
+                    "Document %s not found — skipping ingestion", doc_id
+                )
                 return
             await db.commit()
             await db.refresh(document)
 
             # 2. Parse PDF (CPU-bound — run off the event loop)
-            file_path = os.path.join(infra_settings.upload_dir, document.storage_filename)
+            file_path = os.path.join(
+                infra_settings.upload_dir, document.storage_filename
+            )
             pages = await asyncio.to_thread(document_parser.parse, file_path)
 
             # 3. Check for empty pages
@@ -91,14 +121,17 @@ async def ingest_document(
             warning_msg = None
 
             if total_pages == 0:
-                await document_repository.mark_failed(db, doc_id, "PDF has no pages", page_count=0)
+                await document_repository.mark_failed(
+                    db, doc_id, "PDF has no pages", page_count=0
+                )
                 await db.commit()
                 return
 
             if not non_empty_pages:
                 # All pages are empty — likely a scanned/image-based PDF
                 await document_repository.mark_failed(
-                    db, doc_id,
+                    db,
+                    doc_id,
                     "No extractable text found — PDF may be scanned/image-based",
                     page_count=total_pages,
                 )
@@ -108,7 +141,7 @@ async def ingest_document(
             if len(non_empty_pages) < total_pages:
                 empty_count = total_pages - len(non_empty_pages)
                 warning_msg = (
-                    f"{empty_count} of {total_pages} pages had no extractable text"
+                    f"{empty_count} of {total_pages} pages had no text"
                 )
                 logger.warning("Document %s: %s", doc_id, warning_msg)
 
@@ -117,7 +150,8 @@ async def ingest_document(
 
             if not text_chunks:
                 await document_repository.mark_failed(
-                    db, doc_id,
+                    db,
+                    doc_id,
                     "No text chunks produced after splitting",
                     page_count=total_pages,
                 )
@@ -130,13 +164,15 @@ async def ingest_document(
             for i in range(0, len(text_chunks), batch_size):
                 batch = text_chunks[i : i + batch_size]
                 texts = [c.text for c in batch]
-                
+
                 try:
-                    embeddings = await llm_provider.embed_batch(texts, llm_settings.default_embedding_model)
-                except Exception as exc:
+                    embeddings = await llm_provider.embed_batch(
+                        texts, llm_settings.default_embedding_model
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
                     error_detail = _truncate_error(exc)
                     logger.exception(
-                        "Embedding API failed during ingestion for document %s: %s",
+                        "Embedding API failed during ingestion for %s: %s",
                         doc_id,
                         error_detail,
                     )
@@ -146,7 +182,7 @@ async def ingest_document(
                         f"Embedding generation failed: {error_detail}",
                     )
                     return
-                    
+
                 for chunk, embedding in zip(batch, embeddings, strict=True):
                     chunks_with_embeddings.append(
                         ChunkWithEmbedding(chunk=chunk, embedding=embedding)
@@ -174,7 +210,8 @@ async def ingest_document(
 
             # 8. Mark document as READY
             await document_repository.mark_ready(
-                db, doc_id,
+                db,
+                doc_id,
                 page_count=total_pages,
                 chunk_count=len(chunks_with_embeddings),
                 warning_msg=warning_msg,
@@ -183,7 +220,9 @@ async def ingest_document(
 
             logger.info(
                 "Ingestion complete for %s: %d pages, %d chunks",
-                doc_id, total_pages, len(chunks_with_embeddings),
+                doc_id,
+                total_pages,
+                len(chunks_with_embeddings),
             )
 
         except PasswordProtectedError as exc:
@@ -201,10 +240,12 @@ async def ingest_document(
         except EmbeddingError as exc:
             logger.error("Document %s: %s", doc_id, exc)
             await _mark_failed_after_error(
-                db, doc_id, f"Embedding generation failed: {_truncate_error(exc)}"
+                db,
+                doc_id,
+                f"Embedding generation failed: {_truncate_error(exc)}",
             )
 
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Unexpected error during ingestion of %s", doc_id)
             await _mark_failed_after_error(
                 db,
