@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Any, Optional, List, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select, func, update
+from sqlmodel import select, func, update, delete
 from app.repositories.base import BaseRepository
 from app.models.document import Document, DocumentStatus, Chunk
 from app.schemas.document import DocumentCreate, DocumentUpdate
@@ -23,14 +23,22 @@ class DocumentRepository(BaseRepository[Document, DocumentCreate, DocumentUpdate
         )
         return list(result.scalars().all())
 
-    async def reset_stuck_to_pending(self, db: AsyncSession) -> int:
-        """Reset documents stuck in PROCESSING back to PENDING."""
+    async def reset_stuck_to_pending(self, db: AsyncSession) -> list[uuid.UUID]:
+        """Reset PROCESSING documents to PENDING and return reset document IDs."""
         result = await db.execute(
             update(Document)
             .where(Document.status == DocumentStatus.PROCESSING)
             .values(status=DocumentStatus.PENDING)
+            .returning(Document.id)
         )
-        return result.rowcount
+        return list(result.scalars().all())
+
+    async def get_processing_ids(self, db: AsyncSession) -> list[uuid.UUID]:
+        """Return document IDs currently stuck in PROCESSING."""
+        result = await db.execute(
+            select(Document.id).where(Document.status == DocumentStatus.PROCESSING)
+        )
+        return list(result.scalars().all())
 
     async def get_by_ids(self, db: AsyncSession, ids: Sequence[uuid.UUID]) -> List[Document]:
         """Batch fetch documents by a list of IDs."""
@@ -81,23 +89,6 @@ class DocumentRepository(BaseRepository[Document, DocumentCreate, DocumentUpdate
                 document.page_count = page_count
             await db.flush()
 
-    async def mark_failed_with_rollback(
-        self,
-        db: AsyncSession,
-        doc_id: Any,
-        error_message: str,
-    ) -> None:
-        """Rollback the current transaction, then mark the document as FAILED.
-
-        Used in error handlers where the transaction is already broken.
-        """
-        try:
-            await db.rollback()
-            await self.mark_failed(db, doc_id, error_message)
-            await db.commit()
-        except Exception:
-            logger.exception("Failed to mark document %s as FAILED", doc_id)
-
     async def mark_ready(
         self,
         db: AsyncSession,
@@ -136,6 +127,11 @@ class DocumentRepository(BaseRepository[Document, DocumentCreate, DocumentUpdate
         for data in chunks_data:
             chunk_record = Chunk(document_id=doc_id, **data)
             db.add(chunk_record)
+
+    async def delete_chunks(self, db: AsyncSession, doc_id: Any) -> None:
+        """Delete persisted chunk rows for a document."""
+        await db.execute(delete(Chunk).where(Chunk.document_id == doc_id))
+        await db.flush()
 
     async def get_filenames_by_ids(
         self, db: AsyncSession, ids: Sequence[uuid.UUID]
