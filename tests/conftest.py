@@ -1,22 +1,23 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from unittest.mock import MagicMock
 
-from app.config import settings
+from app.core.config import infra_settings
 
 # Override settings for tests BEFORE importing app modules
-settings.database_url = "sqlite+aiosqlite:///:memory:"
-settings.upload_dir = "./test_uploads"
+infra_settings.database_url = "sqlite+aiosqlite:///:memory:"
+infra_settings.upload_dir = "./test_uploads"
 
 from app.main import app as fastapi_app
-from app.database import get_db
-from app.models import Base
+from app.api.dependencies import get_db, get_job_queue
+from sqlmodel import SQLModel
 
 from sqlalchemy.pool import StaticPool
 
 # Setup test DB engine
 test_engine = create_async_engine(
-    settings.database_url, 
+    str(infra_settings.database_url), 
     echo=False, 
     poolclass=StaticPool,
     connect_args={"check_same_thread": False}
@@ -33,19 +34,39 @@ async def override_get_db():
 
 fastapi_app.dependency_overrides[get_db] = override_get_db
 
-# Patch the background task session makers
-import app.services.document_service
-app.services.document_service.async_session_maker = test_async_session_maker
 
-import app.services.ingestion
-app.services.ingestion.async_session_maker = test_async_session_maker
+class FakeJobQueue:
+    def __init__(self):
+        self.enqueued: list[tuple[str, tuple, dict]] = []
 
-import app.services.retrieval
-app.services.retrieval.async_session_maker = test_async_session_maker
+    async def enqueue_job(self, name, *args, **kwargs):
+        self.enqueued.append((name, args, kwargs))
+        return MagicMock(job_id="test-job")
+
+
+fake_job_queue = FakeJobQueue()
+
+
+async def override_get_job_queue():
+    return fake_job_queue
+
+
+fastapi_app.dependency_overrides[get_job_queue] = override_get_job_queue
+
+
+@pytest.fixture(autouse=True)
+def reset_fake_job_queue():
+    fake_job_queue.enqueued = []
+    yield
+    fake_job_queue.enqueued = []
+
+# Patch the database session maker globally
+import app.core.database
+app.core.database.async_session_maker = test_async_session_maker
 
 # Set up mocked VectorStore on app.state for API tests
-from unittest.mock import MagicMock
 fastapi_app.state.vector_store = MagicMock()
+fastapi_app.state.vector_store.health_check.return_value = True
 
 @pytest.fixture(scope="session")
 def anyio_backend():
@@ -57,11 +78,11 @@ import pytest_asyncio
 async def setup_db():
     # Create tables
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(SQLModel.metadata.create_all)
     yield
     # Drop tables
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(SQLModel.metadata.drop_all)
 
 @pytest_asyncio.fixture
 async def async_client():
@@ -72,9 +93,9 @@ async def async_client():
 @pytest.fixture
 def tmp_upload_dir(tmp_path):
     """Creates a temporary upload directory and patches settings."""
-    original_upload_dir = settings.upload_dir
+    original_upload_dir = infra_settings.upload_dir
     upload_path = tmp_path / "uploads"
     upload_path.mkdir(parents=True, exist_ok=True)
-    settings.upload_dir = str(upload_path)
+    infra_settings.upload_dir = str(upload_path)
     yield upload_path
-    settings.upload_dir = original_upload_dir
+    infra_settings.upload_dir = original_upload_dir

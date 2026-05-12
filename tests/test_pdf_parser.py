@@ -3,8 +3,9 @@
 import pytest
 import fitz  # PyMuPDF
 
-from app.services.pdf_parser import parse_pdf, PageContent
-from app.exceptions import PasswordProtectedError, PDFParseError
+from app.lib.document.pymupdf_provider import PyMuPDFParser
+from app.lib.document.base import PageContent
+from app.core.exceptions import PasswordProtectedError, PDFParseError
 
 
 @pytest.fixture
@@ -59,7 +60,7 @@ def password_pdf(tmp_path):
 class TestParsePDF:
     def test_valid_multi_page_pdf(self, sample_pdf):
         """Should extract text from each page, including empty pages."""
-        pages = parse_pdf(sample_pdf)
+        pages = PyMuPDFParser().parse(sample_pdf)
 
         assert len(pages) == 3
         assert pages[0].page_number == 0
@@ -72,7 +73,7 @@ class TestParsePDF:
 
     def test_empty_pages_pdf(self, empty_pdf):
         """A PDF with blank pages should return pages with empty text."""
-        pages = parse_pdf(empty_pdf)
+        pages = PyMuPDFParser().parse(empty_pdf)
         assert len(pages) == 2
         for page in pages:
             assert page.text.strip() == ""
@@ -80,7 +81,7 @@ class TestParsePDF:
     def test_password_protected_pdf(self, password_pdf):
         """Should raise PasswordProtectedError for encrypted PDFs."""
         with pytest.raises(PasswordProtectedError):
-            parse_pdf(password_pdf)
+            PyMuPDFParser().parse(password_pdf)
 
     def test_invalid_file(self, tmp_path):
         """Should raise PDFParseError for non-PDF files."""
@@ -89,16 +90,16 @@ class TestParsePDF:
             f.write("This is not a PDF")
 
         with pytest.raises(PDFParseError):
-            parse_pdf(fake_path)
+            PyMuPDFParser().parse(fake_path)
 
     def test_nonexistent_file(self):
         """Should raise PDFParseError when file doesn't exist."""
         with pytest.raises(PDFParseError):
-            parse_pdf("/nonexistent/path/file.pdf")
+            PyMuPDFParser().parse("/nonexistent/path/file.pdf")
 
     def test_page_content_dataclass(self, sample_pdf):
         """Each item should be a PageContent instance."""
-        pages = parse_pdf(sample_pdf)
+        pages = PyMuPDFParser().parse(sample_pdf)
         for page in pages:
             assert isinstance(page, PageContent)
             assert isinstance(page.page_number, int)

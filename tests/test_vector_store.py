@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from app.services.vector_store import VectorStore
-from app.services.llm import ChunkWithEmbedding
-from app.services.chunker import TextChunk
+from app.integrations.vectorstores.chroma import VectorStore
+from app.schemas.chunking import TextChunk
+from app.schemas.embedding import ChunkWithEmbedding
 
 
 def _make_cwe(text, page, idx):
@@ -16,7 +16,7 @@ def _make_cwe(text, page, idx):
 @pytest.fixture
 def mock_chroma_client():
     """Mock the chromadb.HttpClient to avoid native C++ crashes during testing."""
-    with patch("app.services.vector_store.chromadb.HttpClient") as mock_http_client:
+    with patch("app.integrations.vectorstores.chroma.chromadb.HttpClient") as mock_http_client:
         mock_instance = MagicMock()
         mock_collection = MagicMock()
         mock_instance.get_or_create_collection.return_value = mock_collection

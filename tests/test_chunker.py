@@ -1,7 +1,8 @@
 """Tests for the text chunker module."""
 
-from app.services.pdf_parser import PageContent
-from app.services.chunker import chunk_pages, TextChunk, SEPARATORS, _split_text_recursive
+from app.lib.document.base import PageContent
+from app.services.chunker import chunk_pages, SEPARATORS, _split_text_recursive
+from app.schemas.chunking import TextChunk
 
 
 class TestSplitTextRecursive:
@@ -100,18 +101,25 @@ class TestChunkPages:
         text = "\n\n".join(sentences)
         pages = [PageContent(page_number=0, text=text)]
 
-        chunks = chunk_pages(pages, chunk_size=100, chunk_overlap=30)
+        chunk_overlap = 30
+        chunks = chunk_pages(pages, chunk_size=100, chunk_overlap=chunk_overlap)
 
-        if len(chunks) >= 2:
-            # Check that the end of chunk[0] overlaps with the start of chunk[1]
-            # Due to recursive splitting, exact overlap may vary, but there
-            # should be *some* shared content between consecutive chunks
-            first_end = chunks[0].text[-30:]
-            second_start = chunks[1].text[:60]
-            # Verify overlap: the tail of chunk[0] should appear in the head of chunk[1]
-            assert first_end.strip() in second_start or any(
-                word in second_start for word in first_end.split() if len(word) > 2
-            ), f"No overlap found between '{first_end}' and '{second_start}'"
+        # Chunking must produce at least 2 chunks for overlap to be testable
+        assert len(chunks) >= 2, f"Expected >= 2 chunks, got {len(chunks)}"
+
+        for i in range(len(chunks) - 1):
+            tail_text = chunks[i].text[-chunk_overlap:]
+            head_text = chunks[i + 1].text[:chunk_overlap]
+            tail_words = [word for word in tail_text.split() if len(word) > 3]
+            matching_words = [word for word in tail_words if word in head_text]
+            if len(tail_text) <= chunk_overlap // 2:
+                has_overlap = tail_text.strip() in head_text
+            else:
+                has_overlap = len(matching_words) / max(1, len(tail_words)) >= 0.5
+            assert has_overlap, (
+                f"No overlap found between chunk {i} and {i+1}: "
+                f"tail='{tail_text}', head='{head_text}'"
+            )
 
     def test_mixed_empty_and_non_empty_pages(self):
         """Empty pages should be skipped; non-empty pages chunked normally."""
