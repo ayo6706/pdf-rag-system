@@ -12,7 +12,7 @@ from tenacity import (
 )
 
 from app.core.exceptions import EmbeddingError, LLMError
-from app.lib.llm.base import BaseLLMProvider
+from app.integrations.llm.base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 
