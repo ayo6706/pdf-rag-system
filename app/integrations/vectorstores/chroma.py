@@ -103,6 +103,19 @@ class VectorStore:
                 logger.exception("Unexpected error deleting chunks for doc_id=%s", doc_id)
                 raise
 
+    def health_check(self) -> bool:
+        """Return whether the Chroma server is reachable."""
+        try:
+            heartbeat = getattr(self.client, "heartbeat", None)
+            if heartbeat is not None:
+                heartbeat()
+                return True
+            self.collection.count()
+            return True
+        except Exception:
+            logger.exception("Vector store health check failed")
+            return False
+
     def search(
         self,
         query_embedding: list[float],
