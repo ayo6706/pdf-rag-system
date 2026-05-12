@@ -6,19 +6,11 @@ page boundaries and carry their source page number through the pipeline.
 """
 
 import logging
-from dataclasses import dataclass
 
-from app.services.pdf_parser import PageContent
+from app.lib.document.base import PageContent
+from app.schemas.chunking import TextChunk
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TextChunk:
-    """A chunk of text with source metadata."""
-    text: str
-    page_number: int
-    chunk_index: int  # sequential across the entire document
 
 
 # Ordered from coarsest to finest boundary
@@ -84,8 +76,12 @@ def _split_text_recursive(
                         break
                     overlap_parts.insert(0, part)
                     overlap_len += candidate_len
-                current_chunk = overlap_parts
-                current_length = overlap_len
+                if overlap_parts:
+                    current_chunk = overlap_parts
+                    current_length = overlap_len
+                else:
+                    current_chunk = [merged[-chunk_overlap:]]
+                    current_length = len(current_chunk[0])
             else:
                 current_chunk = []
                 current_length = 0
@@ -138,6 +134,13 @@ def chunk_pages(
         A list of TextChunk objects with sequential ``chunk_index`` values
         across the entire document. Empty pages produce no chunks.
     """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap must be >= 0")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be < chunk_size")
+
     if separators is None:
         separators = SEPARATORS
 
@@ -162,5 +165,5 @@ def chunk_pages(
                 ))
                 chunk_index += 1
 
-    logger.info(f"Created {len(all_chunks)} chunks from {len(pages)} pages")
+    logger.info("Created %d chunks from %d pages", len(all_chunks), len(pages))
     return all_chunks
