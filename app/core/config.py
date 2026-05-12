@@ -5,11 +5,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class InfraSettings(BaseSettings):
     # ── Infrastructure ───────────────────────────────────────
+    app_env: str = "development"
     database_url: str
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50
     chroma_host: str = "chroma"
     chroma_port: int = 8000
+    redis_url: str = "redis://:REPLACE_ME@redis:6379/0"
+    ingestion_queue_name: str = "ingestion"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
