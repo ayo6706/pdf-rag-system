@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from app.services.chunker import TextChunk
+from app.schemas.chunking import TextChunk
 
 
 @dataclass
