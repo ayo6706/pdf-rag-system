@@ -22,8 +22,10 @@ COPY --from=builder /install /usr/local
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
 
 
+COPY alembic.ini .
 COPY pyproject.toml .
 COPY ./app ./app
+COPY ./migrations ./migrations
 
 RUN mkdir -p ./uploads && chown -R appuser:appuser /app
 
