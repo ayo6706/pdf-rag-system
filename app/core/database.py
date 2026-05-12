@@ -15,4 +15,8 @@ def get_session_maker():
 async def get_background_session() -> AsyncGenerator[AsyncSession]:
     """Provide a self-contained database session for background tasks."""
     async with get_session_maker()() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
