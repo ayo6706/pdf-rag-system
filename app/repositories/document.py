@@ -58,7 +58,9 @@ class DocumentRepository(BaseRepository[Document, DocumentCreate, DocumentUpdate
         return list(result.scalars().all())
 
     async def get_processing_ids(self, db: AsyncSession) -> list[uuid.UUID]:
-        """Return document IDs currently stuck in PROCESSING.
+        """Return document IDs currently having the PROCESSING status.
+
+        This method retrieves IDs where `Document.status == DocumentStatus.PROCESSING`.
 
         Args:
             db: The database session.

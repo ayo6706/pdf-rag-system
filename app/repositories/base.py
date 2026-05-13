@@ -98,6 +98,12 @@ class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     ) -> ModelType:
         """Update an existing record.
 
+        Note:
+            This method only flushes the session (via `await db.flush()`) and
+            refreshes the object (`await db.refresh(db_obj)`). It does not
+            commit the transaction. Callers must call `db.commit()` or manage
+            transactions externally.
+
         Args:
             db: The database session.
             db_obj: The existing database object to update.

@@ -84,6 +84,9 @@ async def ingest_document(
 ) -> None:
     """Full ingestion pipeline: parse → chunk → embed → store → update DB.
 
+    Exceptions are caught, the document is marked as failed (via
+    _mark_failed_after_error), cleanup runs, and the function returns normally.
+
     Args:
         doc_id: UUID of the document to ingest.
         vector_store: Initialized VectorStore instance.
@@ -91,9 +94,6 @@ async def ingest_document(
         llm_settings: LLM settings.
         document_parser: The document parser provider.
         llm_provider: The LLM provider.
-
-    Raises:
-        Exception: Rethrows unexpected errors after cleanup.
     """
     async with get_background_session() as db:
         vector_upserted = False

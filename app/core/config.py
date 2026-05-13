@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class InfraSettings(BaseSettings):
     # ── Infrastructure ───────────────────────────────────────
     app_env: str = "development"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
     database_url: str
     upload_dir: str = "./uploads"
     max_upload_size_mb: int = 50

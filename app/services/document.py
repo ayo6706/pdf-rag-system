@@ -266,6 +266,13 @@ class DocumentService:
         await self.repository.delete(db, document_id)
         await db.commit()
 
+        if not storage_name:
+            logger.warning(
+                "Document %s has no storage_filename, skipping disk deletion.",
+                document_id
+            )
+            return True
+
         # Delete from disk (with path traversal protection)
         resolved_upload_dir = (
             os.path.realpath(config.infra_settings.upload_dir) + os.sep

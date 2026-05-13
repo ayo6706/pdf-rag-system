@@ -6,6 +6,7 @@ and manages the application lifecycle including external resource connections.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -51,8 +52,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     finally:
         job_queue = getattr(app.state, "job_queue", None)
         if job_queue is not None:
-            await queue.close_job_queue(job_queue)
-        await database.engine.dispose()
+            try:
+                await queue.close_job_queue(job_queue)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to close job queue; continuing shutdown.")
+
+        vector_store_instance = getattr(app.state, "vector_store", None)
+        if vector_store_instance is not None:
+            try:
+                if hasattr(vector_store_instance, "close"):
+                    if asyncio.iscoroutinefunction(vector_store_instance.close):
+                        await vector_store_instance.close()
+                    else:
+                        vector_store_instance.close()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to close vector store; continuing shutdown.")
+
+        try:
+            await database.engine.dispose()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Failed to dispose database engine.")
+
 
 
 app = FastAPI(
@@ -87,7 +107,10 @@ app.include_router(router.api_router)
 
 def main() -> None:
     """Entry point for running the application directly."""
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    host = config.infra_settings.api_host
+    port = config.infra_settings.api_port
+    reload = config.infra_settings.app_env == "development"
+    uvicorn.run("app.main:app", host=host, port=port, reload=reload)
 
 
 if __name__ == "__main__":
