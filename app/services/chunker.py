@@ -19,57 +19,52 @@ logger = logging.getLogger(__name__)
 SEPARATORS: list[str] = ["\n\n", "\n", ". ", " "]
 
 
-def _split_text_recursive(
-    text: str,
-    chunk_size: int,
-    chunk_overlap: int,
-    separators: list[str],
+def _hard_split_by_character(
+    text: str, chunk_size: int, chunk_overlap: int
 ) -> list[str]:
-    """Recursively split text at semantic boundaries.
-
-    Tries the first separator; if any resulting piece is still too large,
-    falls back to the next separator for that piece, and so on.
+    """Force-split text into chunks by character count with overlap.
 
     Args:
-        text: The text to split.
-        chunk_size: Maximum characters per chunk.
-        chunk_overlap: Number of characters to overlap between chunks.
-        separators: List of separators to try in order.
+        text: The text string to split.
+        chunk_size: Maximum character count per chunk.
+        chunk_overlap: Overlap character count.
 
     Returns:
-        A list of text strings representing the chunks.
+        A list of hard-split chunks.
     """
-    if not text or not text.strip():
-        return []
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunks.append(text[start:end])
+        # Move forward by (chunk_size - overlap) to create overlap
+        step = chunk_size - chunk_overlap
+        start += step if chunk_overlap < chunk_size else chunk_size
+    return chunks
 
-    # Base case: text fits in a single chunk
-    if len(text) <= chunk_size:
-        return [text]
 
-    # Find the best separator to use at this level
-    separator = separators[0] if separators else ""
-    remaining_separators = separators[1:] if len(separators) > 1 else []
+def _merge_splits(
+    splits: list[str],
+    separator: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    """Combine splits into chunks that fit chunk_size, building overlap.
 
-    if separator:
-        splits = text.split(separator)
-    else:
-        # No separator left — hard-split by character
-        chunks = []
-        start = 0
-        while start < len(text):
-            end = min(start + chunk_size, len(text))
-            chunks.append(text[start:end])
-            # Move forward by (chunk_size - overlap) to create overlap
-            step = chunk_size - chunk_overlap
-            start += step if chunk_overlap < chunk_size else chunk_size
-        return chunks
+    Args:
+        splits: List of text substrings from splitting on the separator.
+        separator: The separator string used.
+        chunk_size: Maximum characters per merged chunk.
+        chunk_overlap: Target overlap characters between consecutive chunks.
 
-    # Merge splits back into chunks that fit within chunk_size
+    Returns:
+        A list of merged text chunks.
+    """
     chunks: list[str] = []
     current_chunk: list[str] = []
     current_length = 0
 
-    for _, split in enumerate(splits):
+    for split in splits:
         piece_length = len(split) + (len(separator) if current_chunk else 0)
 
         if current_length + piece_length > chunk_size and current_chunk:
@@ -106,23 +101,55 @@ def _split_text_recursive(
         merged = separator.join(current_chunk)
         chunks.append(merged)
 
+    return chunks
+
+
+def _split_text_recursive(
+    text: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    separators: list[str],
+) -> list[str]:
+    """Recursively split text at semantic boundaries.
+
+    Tries the first separator; if any resulting piece is still too large,
+    falls back to the next separator for that piece, and so on.
+
+    Args:
+        text: The text to split.
+        chunk_size: Maximum characters per chunk.
+        chunk_overlap: Number of characters to overlap between chunks.
+        separators: List of separators to try in order.
+
+    Returns:
+        A list of text strings representing the chunks.
+    """
+    if not text or not text.strip():
+        return []
+
+    # Base case: text fits in a single chunk
+    if len(text) <= chunk_size:
+        return [text]
+
+    # Find the best separator to use at this level
+    separator = separators[0] if separators else ""
+    remaining_separators = separators[1:] if len(separators) > 1 else []
+
+    if not separator:
+        return _hard_split_by_character(text, chunk_size, chunk_overlap)
+
+    # Split text and merge pieces into chunk_size groups
+    splits = text.split(separator)
+    chunks = _merge_splits(splits, separator, chunk_size, chunk_overlap)
+
     # Recursively split any chunks that are still too large
     result: list[str] = []
     for chunk in chunks:
         if len(chunk) > chunk_size:
-            if remaining_separators:
-                sub_chunks = _split_text_recursive(
-                    chunk, chunk_size, chunk_overlap, remaining_separators
-                )
-                result.extend(sub_chunks)
-            else:
-                # No separators left — hard-split by character
-                start = 0
-                while start < len(chunk):
-                    end = min(start + chunk_size, len(chunk))
-                    result.append(chunk[start:end])
-                    step = chunk_size - chunk_overlap
-                    start += step if chunk_overlap < chunk_size else chunk_size
+            sub_chunks = _split_text_recursive(
+                chunk, chunk_size, chunk_overlap, remaining_separators
+            )
+            result.extend(sub_chunks)
         else:
             result.append(chunk)
 
